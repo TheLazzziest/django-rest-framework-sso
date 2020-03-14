@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.utils.module_loading import import_string
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken, BlacklistMixin, UntypedToken
 from rest_framework_simplejwt.utils import format_lazy
@@ -87,7 +88,7 @@ class SSORefreshToken(SSOBlacklistMixin, RefreshToken):
         claims present in this refresh token to the new access token except
         those claims listed in the `no_copy_claims` attribute.
         """
-        access = SSOAccessToken()
+        access = import_string(api_settings.ACCESS_TOKEN_CLASSES[0])()
 
         # Use instantiation time of refresh token as relative timestamp for
         # access token "exp" claim.  This ensures that both a refresh and
