@@ -1,0 +1,4 @@
+ -r requirements.txt
+
+drf-yasg==1.17.1
+swagger-spec-validator==2.5.0
