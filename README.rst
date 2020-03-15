@@ -2,8 +2,12 @@
 Django REST Framework SSO
 =========================
 
-Django REST Framework SSO is an extension to Django REST Framework that enables
+Django REST Framework SSO is an extension built upon DRF_ and SimpleJWT_ that enables
 Single sign-on in a microservice-oriented environment using the JWT standard.
+
+.. _DRF: https://www.django-rest-framework.org/
+.. _SimpleJWT: https://github.com/SimpleJWT/django-rest-framework-simplejwt
+
 
 This library provides two types of JWT tokens:
 
@@ -11,9 +15,8 @@ This library provides two types of JWT tokens:
 
 2. short-lived authorization tokens for accessing your other apps (these contain permissions given by the primary app)
 
-The client is expected to first login to your primary login application by POSTing an username and password. The client will receive a permanent session token that will allow subsequent requests to the same server be authenticated. These tokens do not contain any permissions/authorization information and cannot be used for SSO into other apps.
-
-Afterwards, the client is expected to obtain and keep updating authorization tokens using the session token. These secondary tokens are short-lived (15mins..1 hour) and contain the permissions that the user has at the time of issuance. These tokens are used to access other services, which then trust the permissions in the JWT payload for the lifetime of the token.
+The client is expected to first login to your primary login application by POSTing an username and password.
+The client will receive a refresh token and access token that will allow subsequent requests to the same server and other server which are connected to it.
 
 Quick start
 -----------
@@ -22,18 +25,33 @@ Quick start
 
     INSTALLED_APPS = [
         ...
+        'rest_framework_simplejwt',
         'rest_framework_sso',
     ]
 
 2. Include the session and authorization token URLs::
 
-    from rest_framework_sso.views import obtain_session_token, obtain_authorization_token
-
     urlpatterns = [
         ...
-        url(r'^session/', obtain_session_token),
-        url(r'^authorize/', obtain_authorization_token),
+        url(r'^sso/', include("rest_framework_sso.urls.jwt"))
     ]
+
+3. Override acces token class in SimpleJWT settings::
+
+    SIMPLE_JWT = {
+        ...
+        'AUTH_TOKEN_CLASSES': ('rest_framework_sso.tokens.SSOAccessToken',),
+    }
+
+4. Add authentications::
+
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        "rest_framework_sso.authentication.SSOJWTTokenUserAuthentication",
+        "rest_framework_sso.authentication.SSOSessionAuthentication",
+        ....
+    ]
+
+5. Generate ssl keys for verifying/signing a jwt payload
 
 Additional data in authorization tokens
 ---------------------------------------
@@ -41,73 +59,32 @@ For example, you may want to include an `account` field in your JWT authorizatio
 so that `otherapp` will know about the user's permissions. To do this, you may need to override
 the ObtainAuthorizationTokenView and AuthorizationTokenSerializer::
 
-    class ObtainAuthorizationTokenView(rest_framework_sso.views.ObtainAuthorizationTokenView):
+    class ExampleObtainTokenSerializer(rest_framework_sso.serializers.jwt.SSObtainTokenSerializer):
         """
         Returns a JSON Web Token that can be used for authenticated requests.
         """
-        serializer_class = AuthorizationTokenSerializer
 
-
-    class AuthorizationTokenSerializer(serializers.Serializer):
-        account = serializers.HyperlinkedRelatedField(
-            queryset=Account.objects.all(),
-            required=True,
-            view_name='api:account-detail',
-        )
-
-        class Meta:
-            fields = ['account']
-
-Replace the authorization token view in your URL conf::
-
-    urlpatterns = [
-        url(r'^authorize/$', ObtainAuthorizationTokenView.as_view()),
-        ...
-    ]
-
-Add the `account` keyword argument to the `create_authorization_payload` function::
-
-    from rest_framework_sso import claims
-
-    def create_authorization_payload(session_token, user, account, **kwargs):
-        return {
-            claims.TOKEN: claims.TOKEN_AUTHORIZATION,
-            claims.SESSION_ID: session_token.pk,
-            claims.USER_ID: user.pk,
-            claims.EMAIL: user.email,
-            'account': account.pk,
-        }
-
-You will need to activete this function in the settings::
-
-    REST_FRAMEWORK_SSO = {
-        'CREATE_AUTHORIZATION_PAYLOAD': 'myapp.authentication.create_authorization_payload',
-        ...
-    }
 
 JWT Authentication
 ------------------
-In order to get-or-create User accounts automatically within your microservice apps,
-you may need to write your custom JWT payload authentication function::
+In order to configuring jwt token, use SimpleJWT settings_.
 
-    from django.contrib.auth import get_user_model
-    from rest_framework_sso import claims
-    
-    def authenticate_payload(payload):
-        user_model = get_user_model()
-        user, created = user_model.objects.get_or_create(
-            service=payload.get(claims.ISSUER),
-            external_id=payload.get(claims.USER_ID),
-        )
-        if not user.is_active:
-            raise exceptions.AuthenticationFailed(_('User inactive or deleted.'))
-        return user
+.. _settings: https://github.com/SimpleJWT/django-rest-framework-simplejwt#settings
+
+If you want to add custom claims, just override SSORefreshToken model and
+write your custom JWT payload fields::
+
+    from rest_framework_sso.tokens import SSOAccessToken
+
+    class CustomSSOAccessToken(SSOAccessToken):
+        def custom_claim(self, claim='new_claim'):
+            self.payload[claim] = 'new_claim_value'
 
 
-Enable authenticate_payload function in REST_FRAMEWORK_SSO settings::
+Add it to SimpleJWT settings doing the following::
 
-    REST_FRAMEWORK_SSO = {
-        'AUTHENTICATE_PAYLOAD': 'otherapp.authentication.authenticate_payload',
+    SIMPLE_JWT = {
+        'ACCESS_TOKEN_CLASSES': ('otherapp.tokens.CustomSSOAccessToken',),
         ...
     }
 
@@ -142,70 +119,45 @@ API views/viewsets to handle permissions, for example::
 
 Settings
 --------
-Example settings for project that both issues and validates tokens for `myapp` and `otherapp`::
+The app settings must be placed inside REST_FRAMEWORK_SSO
 
-    REST_FRAMEWORK_SSO = {
-        'CREATE_AUTHORIZATION_PAYLOAD': 'myapp.authentication.create_authorization_payload',
-        'IDENTITY': 'myapp',
-        'SESSION_AUDIENCE': ['myapp'],
-        'AUTHORIZATION_AUDIENCE': ['myapp', 'otherapp'],
-        'ACCEPTED_ISSUERS': ['myapp'],
-        'PUBLIC_KEYS': {
-            'myapp': 'keys/myapp-20180101.pem',  # both private/public key in same file
-        },
-        'PRIVATE_KEYS': {
-            'myapp': 'keys/myapp-20180101.pem',  # both private/public key in same file
-        },
-    }
-    
-Example settings for project that only accepts tokens signed by `myapp` public key for `otherapp`::
+SSO_SERIALIZERS
+    A set of token serializers for handling token-related manipulations::
 
-    REST_FRAMEWORK_SSO = {
-        'AUTHENTICATE_PAYLOAD': 'otherapp.authentication.authenticate_payload',
-        'VERIFY_SESSION_TOKEN': False,
-        'IDENTITY': 'otherapp',
-        'ACCEPTED_ISSUERS': ['myapp'],
-        'PUBLIC_KEYS': {
-            'myapp': 'keys/myapp-20180101.pem',  # only public key in this file
-        },
+    * obtain_token - a serializer for crafting a new token
+    * refresh_token - a serializer for renewing an already crafted token
+    * verify_token - a serializer for verifying a token
+
+ACCESS_TOKEN_CLASS
+    A dot path to token class for processing access token
+
+Samples
+-------
+Settings for the app that signing tokens for any client app::
+
+    SIMPLE_JWT = {
+        'ISSUER': 'authority',
+        'SUBJECT': 'authority',
+        'AUDIENCE': ['client', ...],
+        'ALGORITHM': 'RSA256',
+        'VERIFYING_KEY': '<private key string>'
     }
 
-Full list of settings parameters with their defaults::
+Example settings for project that accepts tokens signed by `authority` private key for `client`::
 
-    REST_FRAMEWORK_SSO = {
-        'CREATE_SESSION_PAYLOAD': 'rest_framework_sso.utils.create_session_payload',
-        'CREATE_AUTHORIZATION_PAYLOAD': 'rest_framework_sso.utils.create_authorization_payload',
-        'ENCODE_JWT_TOKEN': 'rest_framework_sso.utils.encode_jwt_token',
-        'DECODE_JWT_TOKEN': 'rest_framework_sso.utils.decode_jwt_token',
-        'AUTHENTICATE_PAYLOAD': 'rest_framework_sso.utils.authenticate_payload',
-
-        'ENCODE_ALGORITHM': 'RS256',
-        'DECODE_ALGORITHMS': None,
-        'VERIFY_SIGNATURE': True,
-        'VERIFY_EXPIRATION': True,
-        'VERIFY_ISSUER': True,
-        'VERIFY_AUDIENCE': True,
-        'VERIFY_SESSION_TOKEN': True,
-        'EXPIRATION_LEEWAY': 0,
-        'SESSION_EXPIRATION': None,
-        'AUTHORIZATION_EXPIRATION': datetime.timedelta(seconds=300),
-
-        'IDENTITY': None,
-        'SESSION_AUDIENCE': None,
-        'AUTHORIZATION_AUDIENCE': None,
-        'ACCEPTED_ISSUERS': None,
-        'KEY_STORE_ROOT': None,
-        'PUBLIC_KEYS': {},
-        'PRIVATE_KEYS': {},
-
-        'AUTHENTICATE_HEADER': 'JWT',
+    SIMPLE_JWT = {
+        'ISSUER': 'authority',
+        'SUBJECT': 'client',
+        'ALGORITHM': 'RSA256',
+        'VERIFYING_KEY': '<public key string>'
     }
+
+
 
 Generating RSA keys
 -------------------
-You can use openssl to generate your public/private key pairs::
+See the gist_.
 
-    $ openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048
-    $ openssl rsa -pubout -in private_key.pem -out public_key.pem
-    $ cat private_key.pem public_key.pem > keys/myapp-20180101.pem
+.. _gist: https://gist.github.com/ygotthilf/baa58da5c3dd1f69fae9
+
 
