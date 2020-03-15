@@ -128,6 +128,9 @@ SSO_SERIALIZERS
     * refresh_token - a serializer for renewing an already crafted token
     * verify_token - a serializer for verifying a token
 
+ACCESS_TOKEN_CLASS
+    A dot path to token class for processing access token
+
 Samples
 -------
 Settings for the app that signing tokens for any client app::
