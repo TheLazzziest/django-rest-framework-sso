@@ -88,7 +88,7 @@ class SSORefreshToken(SSOBlacklistMixin, RefreshToken):
         claims present in this refresh token to the new access token except
         those claims listed in the `no_copy_claims` attribute.
         """
-        access = import_string(api_settings.ACCESS_TOKEN_CLASSES[0])()
+        access = import_string(api_settings.ACCESS_TOKEN_CLASS)()
 
         # Use instantiation time of refresh token as relative timestamp for
         # access token "exp" claim.  This ensures that both a refresh and
