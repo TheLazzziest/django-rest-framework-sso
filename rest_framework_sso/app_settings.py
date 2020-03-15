@@ -15,7 +15,7 @@ USER_SETTINGS = getattr(settings, "REST_FRAMEWORK_SSO", None)
 
 DEFAULTS = {
 
-    "ACCESS_TOKEN_CLASS": ('rest_framework_sso.tokens.SSOAccessToken',),
+    "ACCESS_TOKEN_CLASS": 'rest_framework_sso.tokens.SSOAccessToken',
 
     "SSO_SERIALIZERS": ObjDict({
         'obtain_token': 'rest_framework_sso.serializers.jwt.SSObtainTokenSerializer',
